@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>扫雷</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: #12161c; color: #e6e6e6; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+  h1 { font-size: 36px; margin-bottom: 4px; color: #ffd54f; }
+  .subtitle { color: #8a94a6; font-size: 14px; margin-bottom: 16px; }
+  .diffs { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; justify-content: center; }
+  .diffs button { background: #232a35; color: #cfd8dc; padding: 8px 14px; font-size: 13px; }
+  .diffs button.active { background: #f9a825; color: #12161c; }
+  .hud { display: flex; gap: 10px; margin-bottom: 14px; }
+  .box { background: #1e2530; border-radius: 8px; padding: 8px 16px; text-align: center; min-width: 88px; }
+  .box .label { font-size: 11px; color: #8a94a6; text-transform: uppercase; letter-spacing: 1px; }
+  .box .value { font-size: 22px; font-weight: bold; color: #fff; font-variant-numeric: tabular-nums; }
+  .controls { display: flex; gap: 10px; margin-bottom: 14px; flex-wrap: wrap; justify-content: center; }
+  button { background: #f9a825; color: #12161c; border: none; border-radius: 8px; padding: 10px 18px; font-size: 15px; font-weight: bold; cursor: pointer; }
+  button:active { transform: scale(0.96); }
+  button.secondary { background: #37474f; color: #eceff1; }
+  button.toggle-on { background: #ef6c00; color: #fff; }
+  #boardWrap { overflow: auto; max-width: 96vw; border-radius: 10px; border: 2px solid #37474f; }
+  #board { display: grid; touch-action: none; user-select: none; -webkit-user-select: none; }
+  .cell { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 17px; background: #2b333f; border: 1px solid #1a2027; cursor: pointer; }
+  .cell:hover { background: #37424f; }
+  .cell.open { background: #161b22; cursor: default; }
+  .cell.open:hover { background: #161b22; }
+  .cell.boom { background: #c62828; }
+  .cell.wrongflag { background: #c62828; }
+  .n1 { color: #42a5f5; } .n2 { color: #66bb6a; } .n3 { color: #ef5350; }
+  .n4 { color: #ab47bc; } .n5 { color: #ff9800; } .n6 { color: #26c6da; }
+  .n7 { color: #ffee58; } .n8 { color: #bdbdbd; }
+  .hint { margin-top: 14px; color: #8a94a6; font-size: 13px; text-align: center; line-height: 1.6; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); align-items: center; justify-content: center; z-index: 10; }
+  #overlay.show { display: flex; }
+  .panel { background: #1e2530; border-radius: 14px; padding: 28px 32px; text-align: center; max-width: 86vw; }
+  .panel h2 { font-size: 28px; margin-bottom: 8px; color: #ffd54f; }
+  .panel p { color: #8a94a6; margin-bottom: 18px; }
+  @media (max-width: 480px) {
+    .cell { width: 30px; height: 30px; font-size: 16px; }
+  }
+</style>
+</head>
+<body>
+  <h1>扫雷</h1>
+  <div class="subtitle">左键翻开，右键 / 长按插旗，第一下永远安全</div>
+  <div class="diffs">
+    <button data-diff="beginner" class="active">初级 9×9 · 10 雷</button>
+    <button data-diff="intermediate">中级 16×16 · 40 雷</button>
+    <button data-diff="expert">高级 30×16 · 99 雷</button>
+  </div>
+  <div class="hud">
+    <div class="box"><div class="label">💣 剩余</div><div class="value" id="minesLeft">10</div></div>
+    <div class="box"><div class="label">⏱ 时间</div><div class="value" id="timer">0</div></div>
+    <div class="box"><div class="label">🏆 最快</div><div class="value" id="best">—</div></div>
+  </div>
+  <div class="controls">
+    <button id="newBtn">新游戏</button>
+    <button class="secondary" id="flagBtn">🚩 标记模式：关</button>
+  </div>
+  <div id="boardWrap"><div id="board"></div></div>
+  <div class="hint">电脑：左键翻开 / 右键插旗<br>手机：点按翻开 / 长按插旗，也可用标记模式按钮</div>
+  <div id="overlay">
+    <div class="panel">
+      <h2 id="ovTitle"></h2>
+      <p id="ovText"></p>
+      <button id="ovRestart">再来一局</button>
+    </div>
+  </div>
+<script>
+(function () {
+  'use strict';
+  var DIFFS = {
+    beginner: { rows: 9, cols: 9, mines: 10 },
+    intermediate: { rows: 16, cols: 16, mines: 40 },
+    expert: { rows: 16, cols: 30, mines: 99 }
+  };
+  var boardEl = document.getElementById('board');
+  var minesLeftEl = document.getElementById('minesLeft');
+  var timerEl = document.getElementById('timer');
+  var bestEl = document.getElementById('best');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+  var flagBtn = document.getElementById('flagBtn');
+
+  var diffKey = 'beginner';
+  var rows, cols, mineCount;
+  var cells; // {mine, open, flag, count}
+  var started, over, won, flags, revealed, seconds, timerId, flagMode;
+
+  function bestKey() { return 'ms_best_' + diffKey; }
+
+  function loadBest() {
+    var v = localStorage.getItem(bestKey());
+    bestEl.textContent = v ? v + 's' : '—';
+  }
+
+  function newGame() {
+    var d = DIFFS[diffKey];
+    rows = d.rows; cols = d.cols; mineCount = d.mines;
+    cells = [];
+    for (var i = 0; i < rows * cols; i++) {
+      cells.push({ mine: false, open: false, flag: false, count: 0 });
+    }
+    started = false; over = false; won = false;
+    flags = 0; revealed = 0; seconds = 0;
+    flagMode = false;
+    flagBtn.textContent = '🚩 标记模式：关';
+    flagBtn.classList.remove('toggle-on');
+    stopTimer();
+    timerEl.textContent = '0';
+    minesLeftEl.textContent = String(mineCount);
+    overlay.classList.remove('show');
+    loadBest();
+    renderBoard();
+  }
+
+  function idx(r, c) { return r * cols + c; }
+
+  function neighbors(r, c) {
+    var out = [];
+    for (var dr = -1; dr <= 1; dr++) {
+      for (var dc = -1; dc <= 1; dc++) {
+        if (dr === 0 && dc === 0) continue;
+        var nr = r + dr, nc = c + dc;
+        if (nr >= 0 && nr < rows && nc >= 0 && nc < cols) out.push([nr, nc]);
+      }
+    }
+    return out;
+  }
+
+  function placeMines(safeR, safeC) {
+    // Exclude the clicked cell and its neighbors so the first click opens a safe area.
+    var banned = {};
+    banned[idx(safeR, safeC)] = true;
+    var nb = neighbors(safeR, safeC);
+    for (var i = 0; i < nb.length; i++) banned[idx(nb[i][0], nb[i][1])] = true;
+    var placed = 0;
+    while (placed < mineCount) {
+      var r = Math.floor(Math.random() * rows);
+      var c = Math.floor(Math.random() * cols);
+      var id = idx(r, c);
+      if (banned[id] || cells[id].mine) continue;
+      cells[id].mine = true;
+      placed++;
+    }
+    // counts
+    for (var r2 = 0; r2 < rows; r2++) {
+      for (var c2 = 0; c2 < cols; c2++) {
+        var n = 0;
+        var ns = neighbors(r2, c2);
+        for (var k = 0; k < ns.length; k++) {
+          if (cells[idx(ns[k][0], ns[k][1])].mine) n++;
+        }
+        cells[idx(r2, c2)].count = n;
+      }
+    }
+  }
+
+  function renderBoard() {
+    boardEl.style.gridTemplateColumns = 'repeat(' + cols + ', 32px)';
+    boardEl.innerHTML = '';
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var d = document.createElement('div');
+        d.className = 'cell';
+        d.dataset.r = String(r);
+        d.dataset.c = String(c);
+        boardEl.appendChild(d);
+      }
+    }
+  }
+
+  function paintCell(r, c) {
+    var cell = cells[idx(r, c)];
+    var el = boardEl.children[idx(r, c)];
+    el.classList.remove('open', 'boom', 'wrongflag', 'n1', 'n2', 'n3', 'n4', 'n5', 'n6', 'n7', 'n8');
+    if (cell.flag) { el.textContent = '🚩'; return; }
+    if (!cell.open) { el.textContent = ''; return; }
+    el.classList.add('open');
+    if (cell.mine) { el.textContent = '💣'; return; }
+    if (cell.count > 0) {
+      el.textContent = String(cell.count);
+      el.classList.add('n' + cell.count);
+    } else {
+      el.textContent = '';
+    }
+  }
+
+  function paintAll() {
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) paintCell(r, c);
+    }
+  }
+
+  function startTimer() {
+    if (timerId) return;
+    timerId = setInterval(function () {
+      seconds++;
+      timerEl.textContent = String(seconds);
+    }, 1000);
+  }
+
+  function stopTimer() {
+    if (timerId) { clearInterval(timerId); timerId = null; }
+  }
+
+  function reveal(r, c) {
+    if (over || won) return;
+    var cell = cells[idx(r, c)];
+    if (cell.open || cell.flag) return;
+    if (!started) {
+      started = true;
+      placeMines(r, c);
+      startTimer();
+    }
+    if (cell.mine) return lose(r, c);
+    flood(r, c);
+    checkWin();
+  }
+
+  function flood(r, c) {
+    var stack = [[r, c]];
+    while (stack.length) {
+      var cur = stack.pop();
+      var cr = cur[0], cc = cur[1];
+      var cell = cells[idx(cr, cc)];
+      if (cell.open || cell.flag) continue;
+      cell.open = true;
+      revealed++;
+      paintCell(cr, cc);
+      if (cell.count === 0) {
+        var ns = neighbors(cr, cc);
+        for (var i = 0; i < ns.length; i++) {
+          var ncell = cells[idx(ns[i][0], ns[i][1])];
+          if (!ncell.open && !ncell.flag && !ncell.mine) stack.push(ns[i]);
+        }
+      }
+    }
+  }
+
+  function toggleFlag(r, c) {
+    if (over || won) return;
+    var cell = cells[idx(r, c)];
+    if (cell.open) return;
+    cell.flag = !cell.flag;
+    flags += cell.flag ? 1 : -1;
+    minesLeftEl.textContent = String(mineCount - flags);
+    paintCell(r, c);
+  }
+
+  function checkWin() {
+    if (revealed === rows * cols - mineCount) {
+      won = true;
+      stopTimer();
+      // auto-flag remaining mines for a tidy board
+      for (var i = 0; i < cells.length; i++) {
+        if (cells[i].mine && !cells[i].flag) { cells[i].flag = true; flags++; }
+      }
+      minesLeftEl.textContent = '0';
+      paintAll();
+      var prevBest = parseInt(localStorage.getItem(bestKey()) || '0', 10) || 0;
+      var isRecord = !prevBest || seconds < prevBest;
+      if (isRecord) {
+        localStorage.setItem(bestKey(), String(seconds));
+        loadBest();
+      }
+      ovTitle.textContent = '🎉 你赢了！';
+      ovText.textContent = '用时 ' + seconds + ' 秒' + (isRecord ? ' —— 新纪录！' : '，最快 ' + prevBest + ' 秒');
+      overlay.classList.add('show');
+    }
+  }
+
+  function lose(hitR, hitC) {
+    over = true;
+    stopTimer();
+    for (var i = 0; i < cells.length; i++) {
+      if (cells[i].mine) cells[i].open = true;
+      if (cells[i].flag && !cells[i].mine) cells[i].open = true; // mark wrong flags
+    }
+    paintAll();
+    // highlight the mine that was hit and wrong flags
+    var hitEl = boardEl.children[idx(hitR, hitC)];
+    hitEl.classList.add('boom');
+    for (var r = 0; r < rows; r++) {
+      for (var c = 0; c < cols; c++) {
+        var cell = cells[idx(r, c)];
+        if (cell.flag && !cell.mine) {
+          var el = boardEl.children[idx(r, c)];
+          el.classList.add('wrongflag');
+          el.textContent = '✖';
+        }
+      }
+    }
+    ovTitle.textContent = '💥 踩到雷了';
+    ovText.textContent = '已翻开 ' + revealed + ' 格，用时 ' + seconds + ' 秒';
+    overlay.classList.add('show');
+  }
+
+  function cellFromEvent(e) {
+    var t = e.target;
+    if (!t || !t.classList || !t.classList.contains('cell')) return null;
+    return { r: parseInt(t.dataset.r, 10), c: parseInt(t.dataset.c, 10) };
+  }
+
+  boardEl.addEventListener('click', function (e) {
+    var pos = cellFromEvent(e);
+    if (!pos) return;
+    if (flagMode) toggleFlag(pos.r, pos.c);
+    else reveal(pos.r, pos.c);
+  });
+
+  boardEl.addEventListener('contextmenu', function (e) {
+    e.preventDefault();
+    var pos = cellFromEvent(e);
+    if (!pos) return;
+    toggleFlag(pos.r, pos.c);
+  });
+
+  // Long-press to flag on touch (500ms). Distinguish from tap.
+  var lpTimer = null, lpPos = null, lpFired = false;
+  boardEl.addEventListener('touchstart', function (e) {
+    var pos = cellFromEvent(e);
+    if (!pos) return;
+    lpPos = pos;
+    lpFired = false;
+    lpTimer = setTimeout(function () {
+      lpFired = true;
+      toggleFlag(lpPos.r, lpPos.c);
+    }, 500);
+  }, { passive: true });
+  boardEl.addEventListener('touchend', function () {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  }, { passive: true });
+  boardEl.addEventListener('touchmove', function () {
+    if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; }
+  }, { passive: true });
+
+  document.getElementById('newBtn').addEventListener('click', newGame);
+  document.getElementById('ovRestart').addEventListener('click', newGame);
+  flagBtn.addEventListener('click', function () {
+    flagMode = !flagMode;
+    flagBtn.textContent = flagMode ? '🚩 标记模式：开' : '🚩 标记模式：关';
+    flagBtn.classList.toggle('toggle-on', flagMode);
+  });
+
+  var diffBtns = document.querySelectorAll('.diffs button');
+  for (var i = 0; i < diffBtns.length; i++) {
+    diffBtns[i].addEventListener('click', function () {
+      for (var j = 0; j < diffBtns.length; j++) diffBtns[j].classList.remove('active');
+      this.classList.add('active');
+      diffKey = this.getAttribute('data-diff');
+      newGame();
+    });
+  }
+
+  newGame();
+})();
+</script>
+</body>
+</html>
