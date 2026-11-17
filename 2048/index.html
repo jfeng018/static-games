@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>2048</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: #1a1a2e; color: #eee; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+  h1 { font-size: 42px; margin-bottom: 4px; color: #f9f6f2; }
+  .subtitle { color: #9aa0b4; font-size: 14px; margin-bottom: 16px; }
+  .hud { display: flex; gap: 10px; margin-bottom: 14px; }
+  .box { background: #23233a; border-radius: 8px; padding: 8px 16px; text-align: center; min-width: 96px; }
+  .box .label { font-size: 11px; color: #9aa0b4; text-transform: uppercase; letter-spacing: 1px; }
+  .box .value { font-size: 22px; font-weight: bold; color: #f9f6f2; }
+  .controls { display: flex; gap: 10px; margin-bottom: 14px; }
+  button { background: #8f7a66; color: #f9f6f2; border: none; border-radius: 8px; padding: 10px 18px; font-size: 15px; font-weight: bold; cursor: pointer; }
+  button:active { transform: scale(0.96); }
+  button.secondary { background: #3a3a55; }
+  #board { background: #2b2b45; border-radius: 10px; padding: 10px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; width: min(92vw, 440px); touch-action: none; user-select: none; }
+  .cell { aspect-ratio: 1; border-radius: 6px; background: #3a3a55; display: flex; align-items: center; justify-content: center; font-weight: bold; color: #f9f6f2; }
+  .cell[data-v="0"] { background: #3a3a55; }
+  .cell[data-v="2"] { background: #eee4da; color: #776e65; font-size: 34px; }
+  .cell[data-v="4"] { background: #ede0c8; color: #776e65; font-size: 34px; }
+  .cell[data-v="8"] { background: #f2b179; font-size: 34px; }
+  .cell[data-v="16"] { background: #f59563; font-size: 34px; }
+  .cell[data-v="32"] { background: #f67c5f; font-size: 34px; }
+  .cell[data-v="64"] { background: #f65e3b; font-size: 34px; }
+  .cell[data-v="128"] { background: #edcf72; font-size: 28px; }
+  .cell[data-v="256"] { background: #edcc61; font-size: 28px; }
+  .cell[data-v="512"] { background: #edc850; font-size: 28px; }
+  .cell[data-v="1024"] { background: #edc53f; font-size: 24px; }
+  .cell[data-v="2048"] { background: #edc22e; font-size: 24px; }
+  .cell[data-v="4096"], .cell[data-v="8192"] { background: #3c3a32; font-size: 22px; }
+  .hint { margin-top: 14px; color: #9aa0b4; font-size: 13px; text-align: center; line-height: 1.6; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); align-items: center; justify-content: center; z-index: 10; }
+  #overlay.show { display: flex; }
+  .panel { background: #23233a; border-radius: 14px; padding: 28px 32px; text-align: center; max-width: 86vw; }
+  .panel h2 { font-size: 28px; margin-bottom: 8px; }
+  .panel p { color: #9aa0b4; margin-bottom: 18px; }
+  .panel .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  @media (max-width: 480px) {
+    h1 { font-size: 34px; }
+    .cell[data-v="2"], .cell[data-v="4"], .cell[data-v="8"], .cell[data-v="16"], .cell[data-v="32"], .cell[data-v="64"] { font-size: 26px; }
+    .cell[data-v="128"], .cell[data-v="256"], .cell[data-v="512"] { font-size: 22px; }
+    .cell[data-v="1024"], .cell[data-v="2048"] { font-size: 19px; }
+  }
+</style>
+</head>
+<body>
+  <h1>2048</h1>
+  <div class="subtitle">合并相同数字，冲到 2048！</div>
+  <div class="hud">
+    <div class="box"><div class="label">分数</div><div class="value" id="score">0</div></div>
+    <div class="box"><div class="label">最高分</div><div class="value" id="best">0</div></div>
+  </div>
+  <div class="controls">
+    <button id="newBtn">新游戏</button>
+    <button class="secondary" id="undoBtn">撤销一步</button>
+  </div>
+  <div id="board"></div>
+  <div class="hint">方向键 / WASD 或滑动屏幕移动方块<br>相同数字合并得分，2048 即获胜</div>
+  <div id="overlay">
+    <div class="panel">
+      <h2 id="ovTitle"></h2>
+      <p id="ovText"></p>
+      <div class="row">
+        <button id="ovContinue" style="display:none">继续玩</button>
+        <button id="ovRestart">再来一局</button>
+      </div>
+    </div>
+  </div>
+<script>
+(function () {
+  'use strict';
+  var SIZE = 4;
+  var board, score, best, won, over, prevState;
+  var boardEl = document.getElementById('board');
+  var scoreEl = document.getElementById('score');
+  var bestEl = document.getElementById('best');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+  var ovContinue = document.getElementById('ovContinue');
+  var ovRestart = document.getElementById('ovRestart');
+
+  best = parseInt(localStorage.getItem('g2048_best') || '0', 10) || 0;
+
+  function buildCells() {
+    boardEl.innerHTML = '';
+    for (var i = 0; i < 16; i++) {
+      var d = document.createElement('div');
+      d.className = 'cell';
+      d.setAttribute('data-v', '0');
+      boardEl.appendChild(d);
+    }
+  }
+
+  function render() {
+    var cells = boardEl.children;
+    for (var i = 0; i < 16; i++) {
+      var v = board[i];
+      cells[i].setAttribute('data-v', String(v));
+      cells[i].textContent = v ? String(v) : '';
+    }
+    scoreEl.textContent = String(score);
+    bestEl.textContent = String(best);
+  }
+
+  function emptyCells() {
+    var out = [];
+    for (var i = 0; i < 16; i++) if (board[i] === 0) out.push(i);
+    return out;
+  }
+
+  function spawn() {
+    var empt = emptyCells();
+    if (!empt.length) return;
+    var idx = empt[Math.floor(Math.random() * empt.length)];
+    board[idx] = Math.random() < 0.9 ? 2 : 4;
+  }
+
+  function newGame() {
+    board = new Array(16).fill(0);
+    score = 0;
+    won = false;
+    over = false;
+    prevState = null;
+    spawn();
+    spawn();
+    hideOverlay();
+    render();
+  }
+
+  // Process one line (array of 4) sliding toward index 0.
+  // Returns {line, gained, moved}
+  function slideLine(line) {
+    var arr = line.filter(function (v) { return v !== 0; });
+    var gained = 0;
+    for (var i = 0; i < arr.length - 1; i++) {
+      if (arr[i] === arr[i + 1]) {
+        arr[i] *= 2;
+        gained += arr[i];
+        arr.splice(i + 1, 1);
+      }
+    }
+    while (arr.length < 4) arr.push(0);
+    var moved = false;
+    for (var j = 0; j < 4; j++) if (arr[j] !== line[j]) moved = true;
+    return { line: arr, gained: gained, moved: moved };
+  }
+
+  function linesFor(dir) {
+    // dir: 0=left,1=right,2=up,3=down. Returns array of 4 lines, each line is
+    // an array of board indices ordered in slide direction.
+    var lines = [];
+    var r, c;
+    if (dir === 0) { // left: rows left->right
+      for (r = 0; r < 4; r++) lines.push([r * 4, r * 4 + 1, r * 4 + 2, r * 4 + 3]);
+    } else if (dir === 1) { // right: rows right->left
+      for (r = 0; r < 4; r++) lines.push([r * 4 + 3, r * 4 + 2, r * 4 + 1, r * 4]);
+    } else if (dir === 2) { // up: cols top->bottom
+      for (c = 0; c < 4; c++) lines.push([c, 4 + c, 8 + c, 12 + c]);
+    } else { // down: cols bottom->top
+      for (c = 0; c < 4; c++) lines.push([12 + c, 8 + c, 4 + c, c]);
+    }
+    return lines;
+  }
+
+  function move(dir) {
+    if (over) return;
+    var lines = linesFor(dir);
+    var anyMoved = false;
+    var gainedTotal = 0;
+    var snapshot = board.slice();
+    var snapshotScore = score;
+    for (var li = 0; li < 4; li++) {
+      var idxs = lines[li];
+      var line = idxs.map(function (i) { return board[i]; });
+      var res = slideLine(line);
+      if (res.moved) anyMoved = true;
+      gainedTotal += res.gained;
+      for (var j = 0; j < 4; j++) board[idxs[j]] = res.line[j];
+    }
+    if (!anyMoved) return;
+    prevState = { board: snapshot, score: snapshotScore };
+    score += gainedTotal;
+    if (score > best) {
+      best = score;
+      localStorage.setItem('g2048_best', String(best));
+    }
+    spawn();
+    render();
+    if (!won && board.indexOf(2048) !== -1) {
+      won = true;
+      showOverlay('你赢了！', '你合出了 2048，继续挑战更高分？', true);
+      return;
+    }
+    if (!canMove()) {
+      over = true;
+      showOverlay('游戏结束', '没有可移动的方块了，本局得分 ' + score, false);
+    }
+  }
+
+  function canMove() {
+    if (emptyCells().length) return true;
+    for (var r = 0; r < 4; r++) {
+      for (var c = 0; c < 4; c++) {
+        var v = board[r * 4 + c];
+        if (c < 3 && board[r * 4 + c + 1] === v) return true;
+        if (r < 3 && board[(r + 1) * 4 + c] === v) return true;
+      }
+    }
+    return false;
+  }
+
+  function showOverlay(title, text, showContinue) {
+    ovTitle.textContent = title;
+    ovText.textContent = text;
+    ovContinue.style.display = showContinue ? '' : 'none';
+    overlay.classList.add('show');
+  }
+
+  function hideOverlay() {
+    overlay.classList.remove('show');
+  }
+
+  function undo() {
+    if (!prevState || over) return;
+    board = prevState.board.slice();
+    score = prevState.score;
+    prevState = null;
+    hideOverlay();
+    render();
+  }
+
+  document.getElementById('newBtn').addEventListener('click', newGame);
+  document.getElementById('undoBtn').addEventListener('click', undo);
+  ovRestart.addEventListener('click', newGame);
+  ovContinue.addEventListener('click', hideOverlay);
+
+  var keyMap = { ArrowLeft: 0, ArrowRight: 1, ArrowUp: 2, ArrowDown: 3, a: 0, A: 0, d: 1, D: 1, w: 2, W: 2, s: 3, S: 3 };
+  document.addEventListener('keydown', function (e) {
+    if (e.key in keyMap) {
+      e.preventDefault();
+      move(keyMap[e.key]);
+    }
+  });
+
+  var sx = 0, sy = 0, tracking = false;
+  boardEl.addEventListener('touchstart', function (e) {
+    var t = e.changedTouches[0];
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: true });
+  boardEl.addEventListener('touchend', function (e) {
+    if (!tracking) return;
+    tracking = false;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+    if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 1 : 0);
+    else move(dy > 0 ? 3 : 2);
+  }, { passive: true });
+
+  buildCells();
+  newGame();
+})();
+</script>
+</body>
+</html>
