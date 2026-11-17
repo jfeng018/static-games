@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>贪吃蛇</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body { background: #0d1b12; color: #e8f5e9; font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 16px; }
+  h1 { font-size: 36px; margin-bottom: 4px; color: #a5d6a7; }
+  .subtitle { color: #81a184; font-size: 14px; margin-bottom: 16px; }
+  .hud { display: flex; gap: 10px; margin-bottom: 14px; }
+  .box { background: #1b2f1e; border-radius: 8px; padding: 8px 16px; text-align: center; min-width: 96px; }
+  .box .label { font-size: 11px; color: #81a184; text-transform: uppercase; letter-spacing: 1px; }
+  .box .value { font-size: 22px; font-weight: bold; color: #e8f5e9; }
+  .controls { display: flex; gap: 10px; margin-bottom: 14px; }
+  button { background: #2e7d32; color: #fff; border: none; border-radius: 8px; padding: 10px 18px; font-size: 15px; font-weight: bold; cursor: pointer; }
+  button:active { transform: scale(0.96); }
+  button.secondary { background: #37474f; }
+  #wrap { position: relative; width: min(92vw, 440px); }
+  canvas { display: block; width: 100%; aspect-ratio: 1; background: #122b16; border-radius: 10px; border: 2px solid #2e7d32; touch-action: none; }
+  .hint { margin-top: 14px; color: #81a184; font-size: 13px; text-align: center; line-height: 1.6; }
+  #overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.65); align-items: center; justify-content: center; z-index: 10; }
+  #overlay.show { display: flex; }
+  .panel { background: #1b2f1e; border-radius: 14px; padding: 28px 32px; text-align: center; max-width: 86vw; }
+  .panel h2 { font-size: 28px; margin-bottom: 8px; color: #a5d6a7; }
+  .panel p { color: #81a184; margin-bottom: 18px; }
+  .dpad { display: none; margin-top: 16px; grid-template-columns: repeat(3, 56px); grid-template-rows: repeat(3, 56px); gap: 6px; justify-content: center; }
+  .dpad button { background: #2e7d32; font-size: 20px; padding: 0; border-radius: 10px; }
+  .dpad .up { grid-column: 2; grid-row: 1; }
+  .dpad .left { grid-column: 1; grid-row: 2; }
+  .dpad .right { grid-column: 3; grid-row: 2; }
+  .dpad .down { grid-column: 2; grid-row: 3; }
+  @media (pointer: coarse) { .dpad { display: grid; } }
+</style>
+</head>
+<body>
+  <h1>贪吃蛇</h1>
+  <div class="subtitle">吃掉食物，越长越快，别撞墙也别咬到自己！</div>
+  <div class="hud">
+    <div class="box"><div class="label">分数</div><div class="value" id="score">0</div></div>
+    <div class="box"><div class="label">最高分</div><div class="value" id="best">0</div></div>
+    <div class="box"><div class="label">长度</div><div class="value" id="len">3</div></div>
+  </div>
+  <div class="controls">
+    <button id="startBtn">开始</button>
+    <button class="secondary" id="pauseBtn">暂停</button>
+    <button class="secondary" id="restartBtn">重开</button>
+  </div>
+  <div id="wrap"><canvas id="game" width="440" height="440"></canvas></div>
+  <div class="dpad">
+    <button class="up" data-dir="up">▲</button>
+    <button class="left" data-dir="left">◀</button>
+    <button class="right" data-dir="right">▶</button>
+    <button class="down" data-dir="down">▼</button>
+  </div>
+  <div class="hint">方向键 / WASD 或滑动屏幕转向<br>空格或暂停按钮可暂停，速度随得分提升</div>
+  <div id="overlay">
+    <div class="panel">
+      <h2 id="ovTitle"></h2>
+      <p id="ovText"></p>
+      <button id="ovRestart">再来一局</button>
+    </div>
+  </div>
+<script>
+(function () {
+  'use strict';
+  var COLS = 20, ROWS = 20, CELL = 22; // 440 / 20
+  var canvas = document.getElementById('game');
+  var ctx = canvas.getContext('2d');
+  var scoreEl = document.getElementById('score');
+  var bestEl = document.getElementById('best');
+  var lenEl = document.getElementById('len');
+  var overlay = document.getElementById('overlay');
+  var ovTitle = document.getElementById('ovTitle');
+  var ovText = document.getElementById('ovText');
+
+  var snake, dir, dirQueue, food, score, best, timer, running, paused, over;
+
+  best = parseInt(localStorage.getItem('snake_best') || '0', 10) || 0;
+  bestEl.textContent = String(best);
+
+  function speedMs() {
+    // 150ms start, -6ms per food, floor 70ms
+    return Math.max(70, 150 - score * 6);
+  }
+
+  function resetState() {
+    snake = [{ x: 10, y: 10 }, { x: 9, y: 10 }, { x: 8, y: 10 }];
+    dir = { x: 1, y: 0 };
+    dirQueue = [];
+    score = 0;
+    over = false;
+    paused = false;
+    placeFood();
+    updateHud();
+  }
+
+  function placeFood() {
+    while (true) {
+      var f = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+      var clash = false;
+      for (var i = 0; i < snake.length; i++) {
+        if (snake[i].x === f.x && snake[i].y === f.y) { clash = true; break; }
+      }
+      if (!clash) { food = f; return; }
+    }
+  }
+
+  function draw() {
+    ctx.fillStyle = '#122b16';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    // grid dots
+    ctx.fillStyle = 'rgba(255,255,255,0.04)';
+    for (var gx = 0; gx < COLS; gx++) {
+      for (var gy = 0; gy < ROWS; gy++) {
+        ctx.fillRect(gx * CELL + 10, gy * CELL + 10, 2, 2);
+      }
+    }
+    // food
+    ctx.fillStyle = '#ff5252';
+    ctx.beginPath();
+    ctx.arc(food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, CELL / 2 - 2, 0, Math.PI * 2);
+    ctx.fill();
+    // snake
+    for (var i = snake.length - 1; i >= 0; i--) {
+      var s = snake[i];
+      if (i === 0) {
+        ctx.fillStyle = '#66bb6a';
+      } else {
+        ctx.fillStyle = i % 2 ? '#43a047' : '#388e3c';
+      }
+      var pad = i === 0 ? 1 : 2;
+      ctx.beginPath();
+      ctx.roundRect(s.x * CELL + pad, s.y * CELL + pad, CELL - pad * 2, CELL - pad * 2, 5);
+      ctx.fill();
+    }
+    // eyes on head
+    var h = snake[0];
+    var cx = h.x * CELL + CELL / 2, cy = h.y * CELL + CELL / 2;
+    var ex = dir.x * 5, ey = dir.y * 5;
+    ctx.fillStyle = '#0d1b12';
+    ctx.beginPath();
+    ctx.arc(cx + ex - dir.y * 5, cy + ey - dir.x * 5, 2.5, 0, Math.PI * 2);
+    ctx.arc(cx + ex + dir.y * 5, cy + ey + dir.x * 5, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function updateHud() {
+    scoreEl.textContent = String(score);
+    bestEl.textContent = String(best);
+    lenEl.textContent = String(snake.length);
+  }
+
+  function setDir(nx, ny) {
+    // Ignore reverse of current direction and duplicates
+    var last = dirQueue.length ? dirQueue[dirQueue.length - 1] : dir;
+    if (nx === -last.x && ny === -last.y) return;
+    if (nx === last.x && ny === last.y) return;
+    if (dirQueue.length < 3) dirQueue.push({ x: nx, y: ny });
+  }
+
+  function step() {
+    if (paused || over) return;
+    if (dirQueue.length) dir = dirQueue.shift();
+    var head = { x: snake[0].x + dir.x, y: snake[0].y + dir.y };
+    // wall collision
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) return gameOver();
+    // self collision (tail moves away unless eating, so check against body minus tail when not eating)
+    var eating = head.x === food.x && head.y === food.y;
+    var body = eating ? snake : snake.slice(0, -1);
+    for (var i = 0; i < body.length; i++) {
+      if (body[i].x === head.x && body[i].y === head.y) return gameOver();
+    }
+    snake.unshift(head);
+    if (eating) {
+      score += 1;
+      if (score > best) {
+        best = score;
+        localStorage.setItem('snake_best', String(best));
+      }
+      updateHud();
+      placeFood();
+      restartTimer(); // speed up
+    } else {
+      snake.pop();
+    }
+    draw();
+  }
+
+  function restartTimer() {
+    if (timer) clearInterval(timer);
+    timer = setInterval(step, speedMs());
+  }
+
+  function start() {
+    resetState();
+    running = true;
+    document.getElementById('startBtn').textContent = '重新开始';
+    hideOverlay();
+    draw();
+    restartTimer();
+  }
+
+  function togglePause() {
+    if (!running || over) return;
+    paused = !paused;
+    document.getElementById('pauseBtn').textContent = paused ? '继续' : '暂停';
+    if (!paused) draw();
+  }
+
+  function gameOver() {
+    over = true;
+    running = false;
+    if (timer) clearInterval(timer);
+    draw();
+    ovTitle.textContent = '游戏结束';
+    ovText.textContent = '得分 ' + score + '，长度 ' + snake.length + '，最高分 ' + best;
+    overlay.classList.add('show');
+  }
+
+  function hideOverlay() {
+    overlay.classList.remove('show');
+  }
+
+  document.getElementById('startBtn').addEventListener('click', start);
+  document.getElementById('restartBtn').addEventListener('click', start);
+  document.getElementById('pauseBtn').addEventListener('click', togglePause);
+  document.getElementById('ovRestart').addEventListener('click', start);
+
+  var keyDirs = {
+    ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0],
+    w: [0, -1], s: [0, 1], a: [-1, 0], d: [1, 0],
+    W: [0, -1], S: [0, 1], A: [-1, 0], D: [1, 0]
+  };
+  document.addEventListener('keydown', function (e) {
+    if (e.key === ' ' || e.key === 'Spacebar') {
+      e.preventDefault();
+      if (!running && !over) start();
+      else togglePause();
+      return;
+    }
+    if (e.key === 'p' || e.key === 'P') { togglePause(); return; }
+    var d = keyDirs[e.key];
+    if (d) {
+      e.preventDefault();
+      if (!running && !over) start();
+      setDir(d[0], d[1]);
+    }
+  });
+
+  var padDirs = { up: [0, -1], down: [0, 1], left: [-1, 0], right: [1, 0] };
+  var padBtns = document.querySelectorAll('.dpad button');
+  for (var b = 0; b < padBtns.length; b++) {
+    padBtns[b].addEventListener('click', function () {
+      var d = padDirs[this.getAttribute('data-dir')];
+      if (!running && !over) start();
+      setDir(d[0], d[1]);
+    });
+  }
+
+  var sx = 0, sy = 0, tracking = false;
+  canvas.addEventListener('touchstart', function (e) {
+    e.preventDefault();
+    var t = e.changedTouches[0];
+    sx = t.clientX; sy = t.clientY; tracking = true;
+  }, { passive: false });
+  canvas.addEventListener('touchmove', function (e) {
+    e.preventDefault();
+    if (!tracking) return;
+    var t = e.changedTouches[0];
+    var dx = t.clientX - sx, dy = t.clientY - sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+    if (!running && !over) start();
+    if (Math.abs(dx) > Math.abs(dy)) setDir(dx > 0 ? 1 : -1, 0);
+    else setDir(0, dy > 0 ? 1 : -1);
+    sx = t.clientX; sy = t.clientY;
+  }, { passive: false });
+  canvas.addEventListener('touchend', function () { tracking = false; }, { passive: true });
+
+  // initial idle board
+  resetState();
+  draw();
+})();
+</script>
+</body>
+</html>
